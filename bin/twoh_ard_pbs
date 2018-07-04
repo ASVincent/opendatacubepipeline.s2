@@ -1,0 +1,4 @@
+#!/usr/bin/env python3
+
+from tesp.scripts.twoh_ard_pbs import main
+main()
