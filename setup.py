@@ -8,7 +8,7 @@ setup(name='tesp',
       version=versioneer.get_version(),
       description=('A temporary solution to get packaging underway. '
                    'Code will eventually be ported eo-datasets.'),
-      url='https://github.com/OpenDataCubePipelines/opendatacubepipeline.tesp'
+      url='https://github.com/OpenDataCubePipelines/opendatacubepipeline.tesp',
       packages=find_packages(),
       install_requires=[
           'click',
