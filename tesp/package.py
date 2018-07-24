@@ -467,7 +467,7 @@ def get_level1_tags(container, granule=None, yamls_path=None, l1_path=None):
     return l1_tags
 
 
-def package(l1_path, wagl_fname, fmask_fname, gqa_fname, yamls_path, outdir,
+def package(l1_path, results, yamls_path, outdir,
             granule, products=ProductPackage.all(), acq_parser_hint=None):
     """
     Package an L2 product.
@@ -476,16 +476,9 @@ def package(l1_path, wagl_fname, fmask_fname, gqa_fname, yamls_path, outdir,
         A string containing the full file pathname to the Level-1
         dataset.
 
-    :param wagl_fname:
-        A string containing the full file pathname to the wagl
-        output dataset.
-
-    :param fmask_fname:
-        A string containing the full file pathname to the fmask
-        dataset.
-
-    :param gqa_fname:
-        A string containing the full file pathname to the GQA yaml.
+    :param results:
+        A dictionary of product, full file pathname to results.
+        Keys may be a subset of wagl, fmaks, gqa
 
     :param yamls_path:
         A string containing the full file pathname to the yaml
@@ -510,9 +503,13 @@ def package(l1_path, wagl_fname, fmask_fname, gqa_fname, yamls_path, outdir,
     """
     container = acquisitions(l1_path, acq_parser_hint)
     l1_tags = get_level1_tags(container, granule, yamls_path, l1_path)
+    gqa_tags = {}
+
+    if 'wagl' not in results:
+        raise RuntimeError('No wagl results provided to package task')
 
 
-    with h5py.File(wagl_fname, 'r') as fid:
+    with h5py.File(results['wagl'], 'r') as fid:
         grn_id = re.sub(PATTERN2, ARD, granule)
         out_path = pjoin(outdir, grn_id)
 
@@ -539,24 +536,26 @@ def package(l1_path, wagl_fname, fmask_fname, gqa_fname, yamls_path, outdir,
             img_paths[key] = qa_paths[key]
 
         # fmask cogtif conversion
-        rel_path = pjoin(QA, '{}_FMASK.TIF'.format(grn_id))
-        fmask_location = pjoin(out_path, rel_path)
-        fmask_cogtif(fmask_fname, fmask_location)
+        if 'fmask' in results:
+            rel_path = pjoin(QA, '{}_FMASK.TIF'.format(grn_id))
+            fmask_location = pjoin(out_path, rel_path)
+            fmask_cogtif(results['fmask'], fmask_location)
 
-        with rasterio.open(fmask_location) as ds:
-            img_paths['fmask'] = get_img_dataset_info(ds, rel_path)
+            with rasterio.open(fmask_location) as ds:
+                img_paths['fmask'] = get_img_dataset_info(ds, rel_path)
+
+        if 'gqa' in results:
+            # merge all the yaml documents
+            # TODO include fmask yaml (if we go ahead and create one)
+            # TODO put eugl, fmask, tesp in the software_versions section
+            # relative paths yaml doc
+            with open(gqa_fname) as fl:
+                gqa_tags = yaml.load(fl)
 
         # map, quicklook/thumbnail, readme, checksum
         create_html_map(out_path)
         create_quicklook(products, container, out_path)
         create_readme(out_path)
-
-        # merge all the yaml documents
-        # TODO include fmask yaml (if we go ahead and create one)
-        # TODO put eugl, fmask, tesp in the software_versions section
-        # relative paths yaml doc
-        with open(gqa_fname) as fl:
-            gqa_tags = yaml.load(fl)
 
         tags = merge_metadata(l1_tags, wagl_tags, gqa_tags, granule, img_paths)
 

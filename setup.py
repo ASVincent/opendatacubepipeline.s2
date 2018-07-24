@@ -2,10 +2,13 @@
 
 from setuptools import setup, find_packages
 
+import versioneer
+
 setup(name='tesp',
-      version='0.0.5',
+      version=versioneer.get_version(),
       description=('A temporary solution to get packaging underway. '
                    'Code will eventually be ported eo-datasets.'),
+      url='https://github.com/OpenDataCubePipelines/opendatacubepipeline.tesp'
       packages=find_packages(),
       install_requires=[
           'click',

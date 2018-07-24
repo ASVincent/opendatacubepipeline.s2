@@ -18,7 +18,7 @@ import re
 import click
 import yaml
 import fmask
-from tesp.version import get_version as tesp_version
+import tesp
 from tesp.version import REPO_URL as tesp_repo_url
 
 os.environ["CPL_ZIP_ENCODING"] = "UTF-8"
@@ -62,18 +62,21 @@ def merge_metadata(level1_tags, wagl_tags, gqa_tags, granule, image_paths):
 
     source_tags = {level1_tags['product_type']: copy.deepcopy(level1_tags)}
     provider_info = provider_reference_info(granule, wagl_tags)
-    gverify_version = gqa_tags.pop('gverify_version')
-    fmask_repo_url = 'https://bitbucket.org/chchrsc/python-fmask'
-    eugl_repo_url = gqa_tags.pop('software_repository')
-    eugl_version = gqa_tags.pop('software_version')
     software_versions = wagl_tags['software_versions']
-    software_versions['gverify'] = {'version': gverify_version}
+    fmask_repo_url = 'https://bitbucket.org/chchrsc/python-fmask'
+
+    if gqa_tags:
+        gverify_version = gqa_tags.pop('gverify_version')
+        eugl_repo_url = gqa_tags.pop('software_repository')
+        eugl_version = gqa_tags.pop('software_version')
+        software_versions['gverify'] = {'version': gverify_version}
+        software_versions['eugl'] = {'repo_url': eugl_repo_url,
+                                     'version': eugl_version}
+
     software_versions['fmask'] = {'repo_url': fmask_repo_url,
                                   'version': fmask.__version__}
-    software_versions['eugl'] = {'repo_url': eugl_repo_url,
-                                 'version': eugl_version}
     software_versions['tesp'] = {'repo_url': tesp_repo_url,
-                                 'version': tesp_version()}
+                                 'version': tesp.__version__}
 
     # TODO: extend yaml document to include fmask and gqa yamls
     # Merge tags from each input and create a UUID
@@ -86,7 +89,6 @@ def merge_metadata(level1_tags, wagl_tags, gqa_tags, granule, image_paths):
         'product_type': ptype[wagl_tags['source_datasets']['platform_id']],
         'platform': {'code': wagl_tags['source_datasets']['platform_id']},
         'instrument': {'name': wagl_tags['source_datasets']['sensor_id']},
-        'gqa': gqa_tags,
         'format': {'name': 'GeoTIFF'},
         'tile_id': granule,
         'extent': level1_tags['extent'],
@@ -97,6 +99,9 @@ def merge_metadata(level1_tags, wagl_tags, gqa_tags, granule, image_paths):
             'source_datasets': source_tags
         },
     }
+
+    if gqa_tags:
+        merged_yaml['gqa'] = gqa_tags
 
     if provider_info:
         merged_yaml['provider'] = provider_info
