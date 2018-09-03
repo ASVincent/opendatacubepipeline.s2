@@ -21,7 +21,7 @@ from luigi.local_target import LocalFileSystem
 from wagl.acquisition import acquisitions
 from wagl.singlefile_workflow import DataStandardisation
 from tesp.package import package, PATTERN2, ARD
-from tesp.constants import ProductPackage
+from tesp.constants import ArdProductConfig
 
 from eugl.fmask import fmask
 from eugl.gqa import GQATask
@@ -123,7 +123,7 @@ class Package(luigi.Task):
     yamls_dir = luigi.Parameter(default=None)
     cleanup = luigi.BoolParameter()
     acq_parser_hint = luigi.OptionalParameter(default='')
-    products = luigi.ListParameter(default=ProductPackage.default())
+    products = luigi.ListParameter(default=ArdProductConfig.default())
 
     def requires(self):
         # Ensure configuration values are valid
@@ -152,7 +152,7 @@ class Package(luigi.Task):
             shutil.rmtree(self.workdir)
 
     def _validate_cfg(self):
-        assert ProductPackage.validate_products(self.products)
+        assert ArdProductConfig.is_valid(*self.products)
 
 
 class ARDP(luigi.WrapperTask):

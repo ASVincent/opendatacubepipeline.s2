@@ -28,7 +28,7 @@ from tesp.checksum import checksum
 from tesp.contrast import quicklook
 from tesp.html_geojson import html_map
 from tesp.yaml_merge import merge_metadata
-from tesp.constants import ProductPackage
+from tesp.constants import ArdProductConfig
 from tesp.ga_metadata import extract_level1_metadata
 
 from eugl.fmask import fmask_cogtif
@@ -468,7 +468,7 @@ def get_level1_tags(container, granule=None, yamls_path=None, l1_path=None):
 
 
 def package(l1_path, wagl_fname, fmask_fname, gqa_fname, yamls_path, outdir,
-            granule, products=ProductPackage.all(), acq_parser_hint=None):
+            granule, products=ArdProductConfig.all(), acq_parser_hint=None):
     """
     Package an L2 product.
 

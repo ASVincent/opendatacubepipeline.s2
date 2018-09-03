@@ -15,7 +15,7 @@ def extract_level1_metadata(acq, acquisition_path):
 
     """
     if isinstance(acq, _Sentinel2SinergiseAcquisition):
-        return sentinel_2_aws_pds_prepare(Path(acq.granule_xml))
+        return sentinel_2_aws_pds_prepare(Path(acq.pathname))
     elif isinstance(acq, Sentinel2Acquisition):
         return sentinel_2_zip_prepare(Path(acq.pathname))
     elif isinstance(acq, LandsatAcquisition):

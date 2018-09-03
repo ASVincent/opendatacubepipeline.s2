@@ -18,8 +18,7 @@ import re
 import click
 import yaml
 import fmask
-from tesp.version import get_version as tesp_version
-from tesp.version import REPO_URL as tesp_repo_url
+from tesp.version import __version__, REPO_URL
 
 os.environ["CPL_ZIP_ENCODING"] = "UTF-8"
 
@@ -72,8 +71,8 @@ def merge_metadata(level1_tags, wagl_tags, gqa_tags, granule, image_paths):
                                   'version': fmask.__version__}
     software_versions['eugl'] = {'repo_url': eugl_repo_url,
                                  'version': eugl_version}
-    software_versions['tesp'] = {'repo_url': tesp_repo_url,
-                                 'version': tesp_version()}
+    software_versions['tesp'] = {'repo_url': REPO_URL,
+                                 'version': __version__}
 
     # TODO: extend yaml document to include fmask and gqa yamls
     # Merge tags from each input and create a UUID
