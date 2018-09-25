@@ -77,23 +77,31 @@ def _clean(alias):
     return alias.lower()
 
 
-def _write_cogtif(dataset, out_fname):
+def _write_cogtif(dataset, out_fname, min_tiling_size=512):
     """
     Easy wrapper for writing a cogtif, that takes care of datasets
     that are written row by row rather square(ish) blocks.
     """
-    if dataset.chunks[1] == dataset.shape[1]:
-        blockxsize = 512
-        blockysize = 512
+    options = {
+        'compress': 'deflate',
+        'zlevel': 4
+    }
+    cogtif = True
+
+    if not all(filter(lambda n: n < min_tiling_size, dataset.shape)):
+        options['blockxsize'] = dataset.shape[1]
+        options['blockysize'] = dataset.shape[0]
+        cogtif = False  # cogtif controls tiling component
+        data = dataset[:]
+    elif dataset.chunks[1] == dataset.shape[1]:
+        # Assumed to be landsat imagery
+        options['blockysize'] = min_tiling_size
+        options['blockxsize'] = min_tiling_size
         data = dataset[:]
     else:
-        blockysize, blockxsize = dataset.chunks
+        options['blockysize'] = dataset.chunks[0]
+        options['blockxsize'] = dataset.chunks[1]
         data = dataset
-
-    options = {'blockxsize': blockxsize,
-               'blockysize': blockysize,
-               'compress': 'deflate',
-               'zlevel': 4}
 
     nodata = dataset.attrs.get('no_data_value')
     geobox = GriddedGeoBox.from_dataset(dataset)
