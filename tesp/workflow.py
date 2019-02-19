@@ -127,6 +127,7 @@ class Package(luigi.Task):
     acq_parser_hint = luigi.OptionalParameter(default='')
     products = luigi.ListParameter(default=ProductPackage.default())
     qa_products = luigi.ListParameter(default=QA_PRODUCTS)
+    product_version = luigi.ListParameter(default=(0, 1, 0))
 
     def requires(self):
         # Ensure configuration values are valid
@@ -157,8 +158,9 @@ class Package(luigi.Task):
         for key, value in self.input().items():
             antecedent_paths[key] = value.path
 
-        package(self.level1, antecedent_paths, self.yamls_dir, self.pkgdir,
-                self.granule, self.products, self.acq_parser_hint)
+        package(self.level1, antecedent_paths, self.yamls_dir,
+                self.pkgdir, self.product_version, self.granule,
+                self.products, self.acq_parser_hint)
 
         if self.cleanup:
             shutil.rmtree(self.workdir)

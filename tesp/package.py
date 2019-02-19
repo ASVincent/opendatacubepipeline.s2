@@ -13,6 +13,10 @@ import numpy
 import h5py
 from rasterio.enums import Resampling
 import rasterio
+import attr
+import datetime
+import typing
+from functools import partial
 
 import yaml
 from yaml.representer import Representer
@@ -52,13 +56,61 @@ yaml.add_representer(numpy.ndarray, Representer.represent_list)
 
 ALIAS_FMT = {'LAMBERTIAN': 'lambertian_{}', 'NBAR': 'nbar_{}', 'NBART': 'nbart_{}', 'SBT': 'sbt_{}'}
 LEVELS = [2, 4, 8, 16, 32]
-PATTERN1 = re.compile(
-    r'(?P<prefix>(?:.*_)?)(?P<band_name>B[0-9][A0-9]|B[0-9]*|B[0-9a-zA-z]*)'
-    r'(?P<extension>\.TIF)')
+PATTERN1 = re.compile(r'B(?P<band_name>[0-9a-zA-Z]{1,3})\.(?P<extension>[^./]+)$')
 PATTERN2 = re.compile('(L1[GTPCS]{1,2})')
-ARD = 'ARD'
-QA = 'QA'
-SUPPS = 'SUPPLEMENTARY'
+DEFAULT_PRODUCT_FAMILY = 'ard'
+
+def _to_lower(value, start=None, end=None):
+    return value.lower()[start:end]
+
+def _get_date(value):
+    return value.isoformat().split('T')[0]
+
+@attr.s
+class OutpathResolver:
+    prefix = attr.ib(type=str)
+    organisation = attr.ib(type=str, default='ga')
+    platform = attr.ib(type=str, init=False)
+    sensor = attr.ib(type=str, init=False)
+    product = attr.ib(type=str, init=False)
+    product_family = attr.ib(type=str, init=False, default=DEFAULT_PRODUCT_FAMILY)
+    date = attr.ib(type=datetime.datetime, init=False)
+    georef = attr.ib(type=typing.Tuple[str], init=False)
+    product_version = attr.ib(type=typing.List[int], init=False)
+    processing_quality = attr.ib(type=str, init=False)
+    filename = attr.ib(type=str, init=False)
+    extension = attr.ib(type=str, init=False)
+
+    @staticmethod
+    def get_bandname(band_id):
+        return 'band' + band_id.lower().zfill(2)
+
+    def resolve(self, **overrides):
+        args = atrr.asdict(self)
+        args.update(**overrides)
+        return (
+            "{prefix}"
+            "/{organisation}_{platform}_{sensor}_{product_family}"
+            "/{date}"
+            "/{georef_prefix}"
+            "/{organisation}_{platform}_{sensor}_{product}"
+            "_{product_version}"
+            "_{georef_file}_{date}_{processing_quality}{filename}.{extension}"
+        ).format(
+            prefix=args['prefix'],
+            organisation=args['organisation'].lower(),
+            platform=args['platform'].lower(),
+            sensor=args['sensor'].lower()[0:1],
+            product_family=(args['product_family'].lower(),
+            product=(args.get('product', args['product_family'])).lower(),
+            date=args['date'].isoformat().split('T')[0],
+            product_version=('-'.join(map(str, args['product_version)))'],
+            georef_prefix = '/'.join(args['georef)'],
+            georef_file=''.join(args['georef)'],
+            processing_quality=args['processing_quality'].lower(),
+            filename=args['filename'].lower(),
+            extension=args['extension'].lower()
+        )
 
 
 def run_command(command, work_dir):
@@ -126,7 +178,7 @@ def get_img_dataset_info(dataset, path, layer=1):
     }
 
 
-def unpack_products(product_list, container, granule, h5group, outdir):
+def unpack_products(product_list, container, granule, h5group, outpath_resovler):
     """
     Unpack and package the NBAR and NBART products.
     """
@@ -147,13 +199,12 @@ def unpack_products(product_list, container, granule, h5group, outdir):
             acq = [a for a in acqs if
                    a.band_name == dataset.attrs['band_name']][0]
 
-            base_fname = '{}.TIF'.format(splitext(basename(acq.uri))[0])
-            match_dict = PATTERN1.match(base_fname).groupdict()
-            fname = '{}{}_{}{}'.format(match_dict.get('prefix'), product,
-                                       match_dict.get('band_name'),
-                                       match_dict.get('extension'))
-            rel_path = pjoin(product, re.sub(PATTERN2, ARD, fname))
-            out_fname = pjoin(outdir, rel_path)
+            file_params = PATTERN1.match(acq.uri).groupdict()
+            out_fname = outpath_resolver.resolve(
+                product=product.lower(),
+                filename=outpath_resolver.get_bandname(file_params['band_name']),
+                extension=file_params['extension'].lower()
+            )
 
             _write_cogtif(dataset, out_fname)
 
@@ -161,7 +212,7 @@ def unpack_products(product_list, container, granule, h5group, outdir):
             alias = _clean(ALIAS_FMT[product].format(dataset.attrs['alias']))
 
             # Band Metadata
-            rel_paths[alias] = get_img_dataset_info(dataset, rel_path)
+            rel_paths[alias] = get_img_dataset_info(dataset, basename(out_fname))
 
     # retrieve metadata
     scalar_paths = find(h5group, 'SCALAR')
@@ -177,7 +228,7 @@ def unpack_products(product_list, container, granule, h5group, outdir):
     return tags(), rel_paths
 
 
-def unpack_supplementary(container, granule, h5group, outdir):
+def unpack_supplementary(container, granule, h5group, outpath_resolver):
     """
     Unpack the angles + other supplementary datasets produced by wagl.
     Currently only the mode resolution group gets extracted.
@@ -190,12 +241,13 @@ def unpack_supplementary(container, granule, h5group, outdir):
         fmt = '{}_{}.TIF'
         paths = {}
         for dname in dataset_names:
-            rel_path = pjoin(basedir,
-                             fmt.format(granule_id, dname.replace('-', '_')))
-            out_fname = pjoin(outdir, rel_path)
+            out_fname = outpath_resolver.resolve(
+                filename=dname,
+                extension='tif'
+            )
             dset = h5_group[dname]
             alias = _clean(dset.attrs['alias'])
-            paths[alias] = get_img_dataset_info(dset, rel_path)
+            paths[alias] = get_img_dataset_info(dset, os.path.basename(out_fname))
             _write_cogtif(dset, out_fname)
 
         return paths
@@ -253,7 +305,7 @@ def unpack_supplementary(container, granule, h5group, outdir):
     return rel_paths
 
 
-def create_contiguity(product_list, container, granule, outdir):
+def create_contiguity(product_list, container, granule, outpath_resolver):
     """
     Create the contiguity (all pixels valid) dataset.
     """
@@ -261,7 +313,6 @@ def create_contiguity(product_list, container, granule, outdir):
     # this rule is expected to change once more people get involved
     # in the decision making process
     acqs, _ = container.get_mode_resolution(granule)
-    grn_id = re.sub(PATTERN2, ARD, granule)
 
     # relative paths of each dataset for ODC metadata doc
     rel_paths = {}
@@ -270,7 +321,7 @@ def create_contiguity(product_list, container, granule, outdir):
                                      prefix='contiguity-') as tmpdir:
         for product in product_list:
             search_path = pjoin(outdir, product)
-            fnames = [str(f) for f in Path(search_path).glob('*.TIF')]
+            fnames = [str(f) for f in Path(search_path).glob('*.tif')]
 
             # quick work around for products that aren't being packaged
             if not fnames:
@@ -279,17 +330,15 @@ def create_contiguity(product_list, container, granule, outdir):
             # 2018-09-11 Please forgive me; quick hack to remove troublesome quicklook
             # Issue arises on re-running from previous checkpoint
             for _idx, name in enumerate(fnames):
-                if 'QUICKLOOK' in name:
+                if 'quicklook' in name:
                     fnames.pop(_idx)
                     break
 
-            # output filename
-            base_fname = '{}_{}_CONTIGUITY.TIF'.format(grn_id, product)
-            rel_path = pjoin(QA, base_fname)
-            out_fname = pjoin(outdir, rel_path)
-
-            if not exists(dirname(out_fname)):
-                os.makedirs(dirname(out_fname))
+            out_fname = outpath_resolver.resolve(
+                product=product,
+                filename='contiguity',
+                extension='tif'
+            )
 
             alias = ALIAS_FMT[product].format('contiguity')
 
@@ -308,26 +357,28 @@ def create_contiguity(product_list, container, granule, outdir):
 
             # create contiguity
             contiguity(tmp_fname, out_fname)
+
             with rasterio.open(out_fname) as ds:
-                rel_paths[alias] = get_img_dataset_info(ds, rel_path)
+                rel_paths[alias] = get_img_dataset_info(
+                        ds, os.basename(out_fname))
 
     return rel_paths
 
 
-def create_html_map(outdir):
+def create_html_map(outpath_resolver):
     """
     Create the html map and GeoJSON valid data extents files.
     """
     expr = pjoin(outdir, QA, '*_FMASK.TIF')
     contiguity_fname = glob.glob(expr)[0]
-    html_fname = pjoin(outdir, 'map.html')
-    json_fname = pjoin(outdir, 'bounds.geojson')
+    html_fname = outpath_resolver.resolve(filename='map', extension='html')
+    json_fname = outpath_resolver.resolve(filename='bounds', extension='geojson')
 
     # html valid data extents
     html_map(contiguity_fname, html_fname, json_fname)
 
 
-def create_quicklook(product_list, container, outdir):
+def create_quicklook(product_list, container, outpath_resolver):
     """
     Create the quicklook and thumbnail images.
     """
@@ -336,14 +387,13 @@ def create_quicklook(product_list, container, outdir):
     # are quicklooks still needed?
     # this wildcard mechanism needs to change if quicklooks are to
     # persist
-    band_wcards = {'LANDSAT_5': ['L*_B{}.TIF'.format(i) for i in [3, 2, 1]],
-                   'LANDSAT_7': ['L*_B{}.TIF'.format(i) for i in [3, 2, 1]],
-                   'LANDSAT_8': ['L*_B{}.TIF'.format(i) for i in [4, 3, 2]],
-                   'SENTINEL_2A': ['*_B0{}.TIF'.format(i) for i in [4, 3, 2]],
-                   'SENTINEL_2B': ['*_B0{}.TIF'.format(i) for i in [4, 3, 2]]}
-
-    # appropriate wildcards
-    wcards = band_wcards[acq.platform_id]
+    platform_bands = {
+        'LANDSAT_5': [3, 2, 1],
+        'LANDSAT_7': [3, 2, 1],
+        'LANDSAT_8': [4, 3, 2],
+        'SENTINEL_2A': [4, 3, 2],
+        'SENTINEL_2B': [4, 3, 2]
+    }
 
     with tempfile.TemporaryDirectory(dir=outdir,
                                      prefix='quicklook-') as tmpdir:
@@ -353,23 +403,28 @@ def create_quicklook(product_list, container, outdir):
                 # no sbt quicklook for the time being
                 continue
 
-            out_path = Path(pjoin(outdir, product))
             fnames = []
-            for wcard in wcards:
-                fnames.extend([str(f) for f in out_path.glob(wcard)])
+            for band_id in platform_bands[acq.platform_id]:
+                fnames.append(outpath_resolver.resolve(
+                    product=product,
+                    filename=output_resovler.get_bandname(str(band_id)),
+                    extension='tif'
+                )
 
             # quick work around for products that aren't being packaged
             if not fnames:
                 continue
 
-            # output filenames
-            match = PATTERN1.match(fnames[0]).groupdict()
-            out_fname1 = '{}{}{}'.format(match.get('prefix'),
-                                         'QUICKLOOK',
-                                         match.get('extension'))
-            out_fname2 = '{}{}{}'.format(match.get('prefix'),
-                                         'THUMBNAIL',
-                                         '.JPG')
+            out_fname1 = outpath_resolver.resolve(
+                product=product,
+                filename='quicklook',
+                extension='tif'
+            )
+            out_fname2 = outpath_resolver.resolve(
+                product=product,
+                filename='thumbnail',
+                extension='jpg'
+            )
 
             # initial vrt of required rgb bands
             tmp_fname1 = pjoin(tmpdir, '{}.vrt'.format(product))
@@ -438,20 +493,28 @@ def create_quicklook(product_list, container, outdir):
             run_command(cmd, tmpdir)
 
 
-def create_readme(outdir):
+def create_readme(outpath_resolver):
     """
     Create the readme file.
     """
     with resource_stream(tesp.__name__, '_README.md') as src:
-        with open(pjoin(outdir, 'README.md'), 'w') as out_src:
+        out_fname = outpath_resolver.resolve(
+            filename='readme',
+            extension='md'
+        )
+
+        with open(out_fname, 'README.md'), 'w') as out_src:
             out_src.writelines([l.decode('utf-8') for l in src.readlines()])
 
 
-def create_checksum(outdir):
+def create_checksum(outpath_resolver):
     """
     Create the checksum file.
     """
-    out_fname = pjoin(outdir, 'CHECKSUM.sha1')
+    out_fname = outpath_resolver.resolve(
+        filename='checksum',
+        extension='sha1'
+    )
     checksum(out_fname)
 
 
@@ -485,7 +548,7 @@ def get_level1_tags(container, granule=None, yamls_path=None):
     return l1_tags
 
 
-def package(l1_path, antecedents, yamls_path, outdir,
+def package(l1_path, antecedents, yamls_path, outdir, product_version,
             granule, products=ProductPackage.all(), acq_parser_hint=None):
     """
     Package an L2 product.
@@ -504,8 +567,10 @@ def package(l1_path, antecedents, yamls_path, outdir,
         documents for the indexed Level-1 datasets.
 
     :param outdir:
-        A string containing the full file pathname to the directory
-        that will contain the packaged Level-2 datasets.
+        A string containing the prefix for the Level-2 collection
+
+    :param product_version:
+        A tuple containing the product version for inclusion in object keys
 
     :param granule:
         The identifier for the granule
@@ -524,27 +589,45 @@ def package(l1_path, antecedents, yamls_path, outdir,
     l1_tags = get_level1_tags(container, granule, yamls_path)
     antecedent_metadata = {}
 
+    _sample_acquisition = container.get_mode_acquisitions()[0][0]
+    outpath_resolver = OutpathResolver(
+        prefix=outdir,
+        platform=_sample_acquisiton.tag,
+        sensor=_sample_acquisition.sensor_id,
+        date=acquisition.acquisition_datetime,
+        product_version=product_version,
+        processing_quality='nrt',  # TODO rules around this resolution
+        georef=acquisition.spatial_ref,
+        extension='tif'
+    )
+
+    parent_directory = os.basename(
+        outpath_resolver.resolve(
+            filename='dummy',
+            extension=''
+        )
+    )
+
     with h5py.File(antecedents['wagl'], 'r') as fid:
         grn_id = re.sub(PATTERN2, ARD, granule)
-        out_path = pjoin(outdir, grn_id)
 
-        if not exists(out_path):
-            os.makedirs(out_path)
+        if not exists(parent_directory):
+            os.makedirs(parent_directory)
 
         # unpack the standardised products produced by wagl
         wagl_tags, img_paths = unpack_products(products, container, granule,
-                                               fid[granule], out_path)
+                                               fid[granule], outpath_resolver)
 
         # unpack supplementary datasets produced by wagl
         supp_paths = unpack_supplementary(container, granule, fid[granule],
-                                          out_path)
+                                          outpath_resolver)
 
         # add in supplementary paths
         for key in supp_paths:
             img_paths[key] = supp_paths[key]
 
         # file based globbing, so can't have any other tifs on disk
-        qa_paths = create_contiguity(products, container, granule, out_path)
+        qa_paths = create_contiguity(products, container, granule, outpath_resolver)
 
         # add in qa paths
         for key in qa_paths:
@@ -552,18 +635,21 @@ def package(l1_path, antecedents, yamls_path, outdir,
 
         # fmask cogtif conversion
         if 'fmask' in antecedents:
-            rel_path = pjoin(QA, '{}_FMASK.TIF'.format(grn_id))
-            fmask_location = pjoin(out_path, rel_path)
+            fmask_location = outpath_resolver.resolve(
+                filename='fmask',
+                extension='tif'
+            )
             fmask_cogtif(antecedents['fmask'], fmask_location)
             antecedent_metadata['fmask'] = get_fmask_metadata()
 
             with rasterio.open(fmask_location) as ds:
-                img_paths['fmask'] = get_img_dataset_info(ds, rel_path)
+                img_paths['fmask'] = get_img_dataset_info(
+                        ds, os.basename(fmask_location))
 
         # map, quicklook/thumbnail, readme, checksum
-        create_html_map(out_path)
-        create_quicklook(products, container, out_path)
-        create_readme(out_path)
+        create_html_map(outpath_resolver)
+        create_quicklook(products, container, outpath_resolver)
+        create_readme(outpath_resolver)
 
         # merge all the yaml documents
         # TODO include fmask yaml (if we go ahead and create one)
@@ -580,8 +666,12 @@ def package(l1_path, antecedents, yamls_path, outdir,
         tags = merge_metadata(l1_tags, wagl_tags, granule,
                               img_paths, **antecedent_metadata)
 
-        with open(pjoin(out_path, 'ARD-METADATA.yaml'), 'w') as src:
+        out_fname = outpath_resolver.resolve(
+            filename='metadata',
+            extension='yaml'
+        )
+        with open(out_fname, 'w') as src:
             yaml.dump(tags, src, default_flow_style=False, indent=4)
 
         # finally the checksum
-        create_checksum(out_path)
+        create_checksum(outpath_resolver)
